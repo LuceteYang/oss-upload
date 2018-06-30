@@ -7,6 +7,9 @@ var async = require('async');
 var sharp = require('sharp');
 var OSS = require('ali-oss').Wrapper;
 require('dotenv').config()
+const co = require('co');
+const STS = require('ali-oss');
+
 
 
 /* GET home page. */
@@ -67,60 +70,69 @@ router.post('/upload', function(req, res, next) {
     }
     var item_key =  'sanghwan/' + new Date().getTime()+image_index;
     var readStream = fs.createReadStream(filePath);
-    var client = new OSS({
+    uploadOssSTS(item_key,readStream,function(err,url){
+    	if(err){
+    		return callback("error");
+    	}
+        var fileurl = url;
+        fileurl = fileurl.replace("http","https");
+        sharp(filePath)
+            .resize(394, 295)
+            .max()
+            .toBuffer(function (err, data, info) {
+                try {
+                    fs.unlinkSync(filePath);
+                }catch(err) {
+                    console.log('it does not exist filePath',filePath);
+                }
+                if (err) {
+                    console.log('updloadThumbImageFile sharp resize error', err);
+                    callback("error");
+                } else {
+            	    uploadOssSTS(item_key+"_th",data,function(err,url){
+			    	if(err){
+			    		return callback("error");
+			    	}
+                    callback(null, fileurl);
+                });
+            };
+    		})
+    });
+};
+function uploadOssWrapper(item_key,data,callback){
+	    var client = new OSS({
 		    "region": process.env.OSS_REGION,
 		    "accessKeyId":process.env.OSS_ACCESS_KEY_ID,
 		    "bucket":process.env.OSS_BUCKET,
 		    "accessKeySecret":process.env.OSS_ACCESS_KEY_SECRET
 		  });
-    client
-        .put( item_key, readStream)
+        client
+        .put( item_key, data)
         .then(function (origin_val) {
         	console.log(origin_val.url);
-            var fileurl = origin_val.url;
-            fileurl = fileurl.replace("http","https");
-            sharp(filePath)
-                .resize(394, 295)
-                .max()
-                .toBuffer(function (err, data, info) {
-                    try {
-                        fs.unlinkSync(filePath);
-                    }catch(err) {
-                        console.log('it does not exist filePath',filePath);
-                    }
-                    if (err) {
-                        console.log('updloadThumbImageFile sharp resize error', err);
-                        callback("error");
-                    } else {
-                        var client1 = new OSS({
-						    "region": process.env.OSS_REGION,
-						    "accessKeyId":process.env.OSS_ACCESS_KEY_ID,
-						    "bucket":process.env.OSS_BUCKET,
-						    "accessKeySecret":process.env.OSS_ACCESS_KEY_SECRET
-						  });
-                        client1
-                            .put(item_key + "_th", data)
-                            .then(function (val) {
-                            	console.log(val.url);
-                                callback(null, fileurl);
-                            })
-                            .catch (function (err) {
-                                console.log('updloadThumbImageFile Error', err);
-                                callback(err);
-                            });
-                    }
-                });
-        })
-        .catch (function (err) {
-            try {
-                fs.unlinkSync(filePath);
-            }catch(err) {
-                console.log('it does not exist filePath',filePath);
-            }
-            console.log('updloadThumbImageFile S3 Putobject Error', err);
+        	callback(null,origin_val.url)
+        }).catch (function (err) {
+            console.log('uploadOssWrapper Error', err);
             callback(err);
         });
-};
+}
+
+function uploadOssSTS(item_key,data,callback){
+	    var client = new STS({
+		    "region": process.env.OSS_REGION,
+		    "accessKeyId":process.env.OSS_ACCESS_KEY_ID,
+		    "accessKeySecret":process.env.OSS_ACCESS_KEY_SECRET
+		  });
+		co(function* () {
+  			client.useBucket(process.env.OSS_BUCKET);
+		  var origin_val = yield client.put(item_key, data);
+		  console.log(origin_val.url);
+          callback(null,origin_val.url)
+		}).catch(function (err) {
+            console.log('uploadOssSTS Error', err);
+            callback(err);
+		});
+}
 
 function getType(object) {
     /*
